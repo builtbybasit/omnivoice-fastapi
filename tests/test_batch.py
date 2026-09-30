@@ -287,3 +287,18 @@ def test_the_model_not_being_ready_is_a_503(settings):
     assert response.status_code == 503
     assert response.headers["retry-after"] == "5"
     assert response.json()["error"]["code"] == "overloaded"
+
+
+def test_engine_batch_size_splits_a_group_into_calls(settings, engine):
+    from fastapi.testclient import TestClient
+
+    from omnivoice_api.app import create_app
+
+    settings.engine_batch_size = 2
+    with TestClient(create_app(settings, engine)) as client:
+        make_voice(client)
+        stream = lines(
+            batch(client, [{"id": str(i), "input": "Hi.", "voice": "mara"} for i in range(4)])
+        )
+    assert stream[-1]["items"] == {"done": 4, "failed": 0}
+    assert [len(call_lines) for call_lines, _ in engine.calls] == [2, 2]

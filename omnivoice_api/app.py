@@ -56,6 +56,7 @@ class Server:
             self.voices,
             self.settings.max_item_chars,
             self.settings.ping_seconds,
+            self.settings.engine_batch_size or self.settings.max_batch_items,
         )
 
     def ready(self) -> Renderer:

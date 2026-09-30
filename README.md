@@ -144,6 +144,7 @@ Settings come from `OMNIVOICE_*` environment variables, then `.env` (copy `.env.
 | `OMNIVOICE_VOICES_DIR` | `voices` | Your voices (recordings, transcripts, descriptions) |
 | `OMNIVOICE_PROMPTS_DIR` | `prompts` | Encoded voice prompts (a cache) |
 | `OMNIVOICE_MAX_BATCH_ITEMS` | `16` | Items per batch request |
+| `OMNIVOICE_ENGINE_BATCH_SIZE` | `0` | Lines per model call; each call's lines stream back as it finishes. `0` renders a request's lines in one call. `2` was fastest on an M1 Air |
 | `OMNIVOICE_MAX_BATCH_CHARS` | `12000` | Combined input characters per batch |
 | `OMNIVOICE_MAX_ITEM_CHARS` | `1500` | Characters in one item |
 | `OMNIVOICE_MAX_UPLOAD_MB` | `50` | Largest reference recording |

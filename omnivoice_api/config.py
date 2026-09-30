@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     voices_dir: Path = Path("voices")
     prompts_dir: Path = Path("prompts")
     max_batch_items: int = Field(16, ge=1)
+    engine_batch_size: int = Field(0, ge=0)  # lines per model call; 0 = a whole group
     max_batch_chars: int = Field(12000, ge=1)
     max_item_chars: int = Field(1500, ge=1)
     max_upload_mb: int = Field(50, ge=1)

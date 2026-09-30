@@ -46,12 +46,14 @@ class Renderer:
         voices: VoiceStore,
         max_item_chars: int,
         ping_seconds: float,
+        engine_batch_size: int,
     ):
         self.engine = engine
         self.model = model
         self.voices = voices
         self.max_item_chars = max_item_chars
         self.ping_seconds = ping_seconds
+        self.engine_batch_size = engine_batch_size
 
     def prepare(self, items: Sequence[SpeechItem], extra: dict[str, Any] | None) -> list[Job]:
         """Check each item and resolve its voice and options. Model thread: loads clone prompts."""
@@ -180,8 +182,12 @@ class Renderer:
                     yield encode_line(answered[job.index])
                 else:
                     groups.setdefault(job.group, []).append(job)
-            for group in groups.values():
-                async for line in self.render(group, audio_format):
+            size = self.engine_batch_size
+            chunks = [
+                group[i : i + size] for group in groups.values() for i in range(0, len(group), size)
+            ]
+            for chunk in chunks:
+                async for line in self.render(chunk, audio_format):
                     if line["type"] == "item":
                         answered[line["index"]] = line
                     yield encode_line(line)
