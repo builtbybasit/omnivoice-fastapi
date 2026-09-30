@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 .env
 voices/
+prompts/
 *.wav
 *.pt
 *.whl
