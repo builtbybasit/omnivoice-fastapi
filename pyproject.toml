@@ -1,0 +1,31 @@
+[project]
+name = "omnivoice-fastapi"
+version = "0.1.0"
+description = "OpenAI-compatible batch speech API backed by OmniVoice"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.142.1",
+    "uvicorn>=0.54.0",
+    "python-multipart>=0.0.32",
+    "omnivoice",
+    "rich>=15.0.0",
+    "soundfile>=0.14.0",
+    "torch==2.8.0+cu128",
+    "torchaudio==2.8.0+cu128",
+]
+
+[tool.uv]
+environments = ["sys_platform == 'linux'", "sys_platform == 'win32'"]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+omnivoice = { git = "https://github.com/k2-fsa/OmniVoice.git" }
+torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }]
+torchaudio = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }]
+
+[tool.ruff]
+line-length = 100
