@@ -1,11 +1,11 @@
 """Measure generation speed on this machine's backend (the one the server would use).
 
-    uv run python scripts/benchmark.py
-    uv run python scripts/benchmark.py --voice example2 --batch-sizes 1,4,8 --steps 32
+    uv run python scripts/benchmark.py --voice example2    # a cloned voice, its saved prompt
+    uv run python scripts/benchmark.py                      # a designed voice (no recording)
 
 Speed is the real-time factor: seconds of audio rendered per second of wall time (higher is
 faster; 1.0x keeps pace with playback). Each case is timed after a warm-up call. Text is typical
-audiobook narration, about 150 characters (roughly 10 s of speech) a line.
+audiobook narration, about 150 characters (roughly 6 s of speech) a line.
 """
 
 from __future__ import annotations
@@ -71,8 +71,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--batch-sizes", default="1,2,4,8")
     parser.add_argument("--steps", default="16,32")
-    parser.add_argument("--voice", help="a stored cloned voice to benchmark too")
-    parser.add_argument("--reference", type=Path, help="a recording to also benchmark cloning")
+    parser.add_argument("--voice", help="a cloned voice from the voices directory, by id")
+    parser.add_argument("--reference", type=Path, help="a recording to clone, encoded afresh")
     parser.add_argument("--transcript", help="what --reference says (else it is transcribed)")
     parser.add_argument("--repeats", type=int, default=1)
     args = parser.parse_args()
@@ -87,15 +87,21 @@ def main() -> None:
     engine = load_engine(settings)
     print(f"Model loaded in {time.perf_counter() - started:.1f} s\n")
 
-    voices = {"designed": (None, "female, british accent")}
+    voices = {}
     if args.voice:
         store = VoiceStore(settings.voices_dir, settings.prompts_dir)
         voice = store.get(args.voice)
         if voice is None or not voice.clone:
             parser.error(f"no cloned voice '{args.voice}' in {store.root}")
+        saved = store.prompts / f"{voice.id}{engine.prompt_suffix}"
+        how = "loaded from " + saved.name if saved.is_file() else "encoded (none saved yet)"
+        started = time.perf_counter()
         voices[args.voice] = (store.prompt(voice, engine), None)
+        print(f"Voice {voice.id}: prompt {how} in {time.perf_counter() - started:.3f} s\n")
     if args.reference:
         voices["cloned"] = (engine.encode_prompt(args.reference, args.transcript)[0], None)
+    if not voices:
+        voices["designed"] = (None, "female, british accent")
 
     def render(size: int, num_step: int, prompt, instruct) -> tuple[float, float]:
         lines = [Line(TEXTS[i % len(TEXTS)], "en", instruct, 1.0, prompt) for i in range(size)]
@@ -104,7 +110,7 @@ def main() -> None:
         audios = engine.generate(lines, options)
         return time.perf_counter() - started, sum(len(a) for a in audios) / engine.sample_rate
 
-    render(1, 8, *voices["designed"])  # warm-up: kernel compilation, caches
+    render(1, 8, *next(iter(voices.values())))  # warm-up: kernel compilation, caches
 
     print(f"{'voice':<9} {'steps':>5} {'batch':>5} {'wall s':>7} {'audio s':>8} {'speed':>7} "
           f"{'s/line':>7} {'peak GB':>8}")
