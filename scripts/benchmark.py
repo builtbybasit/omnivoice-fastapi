@@ -12,6 +12,7 @@ of the batch size. So rows compare directly:
 - vs 1: against rendering the lines one at a time; below 1.0x the batch is slower
 - first line: how long a client waits for the first streamed line
 - padding: work spent on silence, since every line in a call is padded to the longest one
+  ("packed" with FlashInfer, which runs the lines end to end without padding)
 
 Text is audiobook narration; --text mixed (the default) varies line length as books do. Each case
 is timed after a warm-up call. --find-max doubles one call's lines until it fails (usually out of
@@ -29,11 +30,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from rich.console import Console, Group
-from rich.live import Live
+from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
-from rich.spinner import Spinner
 from rich.table import Table
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -218,22 +217,21 @@ def main() -> None:
     for name in ("voice", "steps", "batch", "calls", "wall s", "audio s", "speed", "vs 1",
                  "first line s", "padding", "peak GB"):
         table.add_column(name, justify="left" if name == "voice" else "right")
-    spinner = Spinner("dots")
     results: list[tuple[str, int, int, Result]] = []
     baseline: dict[tuple[str, int, int], float] = {}  # (voice, steps, lines) -> batch-1 wall
 
-    def measure(live: Live, voice: str, num_step: int, size: int, batch: int, prompt,
+    def measure(voice: str, num_step: int, size: int, batch: int, prompt,
                 instruct) -> Result | None:
         """Add one row; None if a call failed."""
         case = f"{voice} · {num_step} steps · batch {batch}"
-        spinner.update(text=f"{case} · {size} lines…")
+        status.update(f"{case} · {size} lines…")
         try:
             result = min((run(size, batch, num_step, prompt, instruct)
                           for _ in range(args.repeats)), key=lambda r: r.wall)
         except Exception as exc:  # usually out of memory; the message says
             free_memory(backend)
             error = (str(exc).splitlines() or [type(exc).__name__])[0][:120]
-            live.console.print(f"[red]{case} failed:[/] {escape(error)}")
+            console.print(f"[red]✗ {case} failed:[/] {escape(error)}")
             table.add_row(voice, str(num_step), str(batch), "", "", "", "[bold red]failed")
             return None
         speed = result.audio / result.wall
@@ -247,24 +245,26 @@ def main() -> None:
             f"{result.audio:.1f}", coloured(f"{speed:.2f}x", speed >= 1, speed < 1),
             coloured(f"{versus:.2f}x", versus > 1.05, versus < 0.95) if versus else "",
             f"{result.first:.1f}",
-            coloured(f"{result.padding:.0%}", result.padding < 0.25,
-                     result.padding >= 0.5),
+            coloured(f"{result.padding:.0%}", result.padding < 0.25, result.padding >= 0.5)
+            if getattr(engine, "pads_batches", True) else "[dim]packed[/]",
             peak,
         )
         results.append((voice, num_step, batch, result))
+        console.print(f"[green]✓[/] {case}: {speed:.2f}x real time, first line after "
+                      f"{result.first:.1f} s")
         return result
 
     found = []
-    with Live(Group(table, spinner), console=console, refresh_per_second=8) as live:
+    with console.status("Starting…") as status:
         for voice, (prompt, instruct) in voices.items():
             for num_step in steps:
                 if not args.find_max:
                     for batch in batch_sizes:
-                        measure(live, voice, num_step, count, batch, prompt, instruct)
+                        measure(voice, num_step, count, batch, prompt, instruct)
                     continue
 
                 def fits(size: int) -> bool:
-                    return measure(live, voice, num_step, size, size, prompt, instruct) is not None
+                    return measure(voice, num_step, size, size, prompt, instruct) is not None
 
                 good, size = 0, 1
                 while size <= args.max_batch and fits(size):
@@ -274,8 +274,8 @@ def main() -> None:
                     mid = (good + bad) // 2
                     good, bad = (mid, bad) if fits(mid) else (good, mid)
                 found.append((voice, num_step, good))
-        live.update(table)
     console.print()
+    console.print(table)
 
     if args.find_max:
         for voice, num_step, size in found:
@@ -288,23 +288,25 @@ def main() -> None:
 
     best = {}
     for (voice, num_step), rows in itertools.groupby(results, key=lambda row: row[:2]):
-        *_, batch, result = max(rows, key=lambda row: row[3].audio / row[3].wall)
-        best[num_step] = best.get(num_step) or batch
+        rows = list(rows)
+        fastest = max(row[3].audio / row[3].wall for row in rows)
+        # Within 5% is noise; of those, the smallest batch streams its first line soonest.
+        close = [row for row in rows if row[3].audio / row[3].wall >= 0.95 * fastest]
+        *_, batch, result = min(close, key=lambda row: row[2])
+        best.setdefault(num_step, batch)
         one_by_one = baseline.get((voice, num_step, count))
         versus = f", {one_by_one / result.wall:.2f}x one line at a time" if one_by_one else ""
-        console.print(f"[bold]{voice} · {num_step} steps:[/] batch [bold]{batch}[/] is fastest at "
+        console.print(f"[bold]{voice} · {num_step} steps:[/] batch [bold]{batch}[/] at "
                       f"{result.audio / result.wall:.2f}x real time{versus}; first line after "
                       f"{result.first:.1f} s")
     if best:
         num_step = settings.default_num_steps if settings.default_num_steps in best else steps[-1]
-        why = ("\n[dim]One line already keeps this machine busy, so batching only adds padding.[/]"
-               if best[num_step] == 1 else "")
         console.print(Panel.fit(
             f"Set [bold green]OMNIVOICE_ENGINE_BATCH_SIZE={best[num_step]}[/] in .env "
-            f"(fastest at {num_step} steps){why}",
+            f"(at {num_step} steps)\n[dim]The smallest batch within 5% of the fastest: about as "
+            "fast, and the first line streams sooner.[/]",
             border_style="green",
         ))
-
 
 if __name__ == "__main__":
     main()
