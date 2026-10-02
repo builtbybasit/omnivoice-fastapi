@@ -32,7 +32,8 @@ step "Checking the NVIDIA driver"
 [[ -x /usr/lib/wsl/lib/nvidia-smi ]] && PATH="/usr/lib/wsl/lib:$PATH"
 command -v nvidia-smi >/dev/null ||
   fail "WSL cannot find nvidia-smi: install or update the NVIDIA driver on Windows, then run 'wsl --update' in PowerShell."
-cuda_version="$(nvidia-smi | sed -n 's/.*CUDA Version: *\([0-9][0-9.]*\).*/\1/p' | head -n 1)"
+# Older drivers print "CUDA Version: 12.8", newer ones "CUDA UMD Version: 13.4".
+cuda_version="$(nvidia-smi | sed -nE 's/.*CUDA (UMD )?Version: *([0-9][0-9.]*).*/\2/p' | head -n 1)"
 [[ -n "$cuda_version" ]] || fail "nvidia-smi reported no CUDA version; is the GPU visible to WSL?"
 if [[ "$(printf '%s\n' 12.8 "$cuda_version" | sort -V | head -n 1)" != 12.8 ]]; then
   fail "The Windows NVIDIA driver supports CUDA $cuda_version, but PyTorch here needs 12.8 or newer (driver R570+). Update the driver on Windows."
