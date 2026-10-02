@@ -17,6 +17,7 @@ case "${1:-}" in
 esac
 
 fail() { echo "$*" >&2; exit 1; }
+step() { echo; echo "==> $*"; }
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 [[ -n "${WSL_DISTRO_NAME:-}" ]] ||
@@ -26,6 +27,7 @@ case "$project_root" in
 esac
 command -v uv >/dev/null || fail "Install uv in WSL first: curl -LsSf https://astral.sh/uv/install.sh | sh"
 
+step "Checking the NVIDIA driver"
 # --- NVIDIA driver. WSL gets CUDA from the Windows driver; do not install a Linux driver in WSL.
 [[ -x /usr/lib/wsl/lib/nvidia-smi ]] && PATH="/usr/lib/wsl/lib:$PATH"
 command -v nvidia-smi >/dev/null ||
@@ -41,6 +43,7 @@ cd "$project_root"
 
 # --- Python packages, flashinfer-python included. --inexact keeps the JIT cache, which uv.lock
 # does not list; a plain `uv sync` removes it, and the next step puts it back from the local wheel.
+step "Installing Python packages (the first run downloads several GB)"
 uv sync --extra cuda --inexact
 
 # --- FlashInfer JIT cache: precompiled kernels, a 1.3 GB wheel. Downloads through pip/uv stalled,
@@ -86,6 +89,7 @@ flashinfer_wheel() {
   echo "$wheel"
 }
 
+step "Checking the FlashInfer JIT cache"
 installed_jit_cache="$(uv pip show flashinfer-jit-cache 2>/dev/null | sed -n 's/^Version: //p')"
 if [[ "$installed_jit_cache" != "$flashinfer_version"* ]]; then
   wheel="$(flashinfer_wheel)"
@@ -95,6 +99,7 @@ fi
 
 # --- The model (3.3 GB on first run). Downloaded here so a stall shows in this terminal and
 # resumes on the next run, instead of leaving a started server stuck at "loading".
+step "Checking the model"
 export OMNIVOICE_BACKEND=torch
 uv run --no-sync python -m omnivoice_api.download
 
@@ -103,6 +108,7 @@ if [[ "$setup_only" == true ]]; then
   exit 0
 fi
 
+step "Starting the server: loading the model takes a minute; it is ready when 'Uvicorn running on' appears"
 # FlashInfer is required: the server refuses to start without it rather than run 2x slower.
 # Set OMNIVOICE_ENABLE_FLASHINFER=false in the environment to run the baseline path on purpose.
 exec env OMNIVOICE_ENABLE_FLASHINFER="${OMNIVOICE_ENABLE_FLASHINFER:-true}" \
