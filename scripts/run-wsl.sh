@@ -38,6 +38,13 @@ if [[ "$(printf '%s\n' 12.8 "$cuda_version" | sort -V | head -n 1)" != 12.8 ]]; 
   fail "The Windows NVIDIA driver supports CUDA $cuda_version, but PyTorch here needs 12.8 or newer (driver R570+). Update the driver on Windows."
 fi
 
+# --- ffmpeg adds mp3 and opus output; the server runs without it, so a failed install is not fatal.
+if ! command -v ffmpeg >/dev/null; then
+  step "Installing ffmpeg (sudo may ask for your WSL password)"
+  { sudo apt-get update && sudo apt-get install -y ffmpeg; } ||
+    echo "Could not install ffmpeg; mp3 and opus output stay unavailable." >&2
+fi
+
 cd "$project_root"
 [[ -f .env ]] || cp .env.example .env
 

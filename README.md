@@ -42,14 +42,15 @@ That one command does the setup and starts the server. It skips any step that's 
 On each run it:
 
 1. Checks WSL, the project location, and that the Windows NVIDIA driver supports CUDA 12.8 or newer.
-2. Installs the `cuda` extra from `uv.lock`, including `flashinfer-python`.
-3. Installs the FlashInfer JIT cache if it's missing: `flashinfer_jit_cache-0.6.15.post1+cu128`, a 1.3 GB wheel of precompiled kernels, kept outside `uv.lock`.
+2. Installs `ffmpeg` with `apt` if it's missing, for `mp3` and `opus` output. `sudo` may ask for your WSL password. If the install fails, the server still starts without those formats.
+3. Installs the `cuda` extra from `uv.lock`, including `flashinfer-python`.
+4. Installs the FlashInfer JIT cache if it's missing: `flashinfer_jit_cache-0.6.15.post1+cu128`, a 1.3 GB wheel of precompiled kernels, kept outside `uv.lock`.
    - Downloads of it through pip/uv have stalled, so the script fetches it from the GitHub release with `curl`. Stalled transfers are restarted, and rerunning the script resumes an interrupted download.
    - The wheel is checked against its SHA-256 and kept in `~/.cache/omnivoice-fastapi/wheels`.
    - A plain `uv sync` removes the JIT cache. The next run reinstalls it from that saved wheel without downloading again.
    - To use a wheel you downloaded some other way: `FLASHINFER_JIT_CACHE_WHEEL=/path/to/wheel bash scripts/run-wsl.sh`.
-4. Downloads the model (3.3 GB) the first time, so a slow download shows up in the terminal and resumes on the next run.
-5. Starts the API with FlashInfer required. Set `OMNIVOICE_ENABLE_FLASHINFER=false` to run the slower baseline path on purpose.
+5. Downloads the model (3.3 GB) the first time, so a slow download shows up in the terminal and resumes on the next run.
+6. Starts the API with FlashInfer required. Set `OMNIVOICE_ENABLE_FLASHINFER=false` to run the slower baseline path on purpose.
 
 Windows apps can call the WSL server at `http://localhost:8000/v1`. Interactive API docs are at `/docs`. Both run scripts take `HOST` and `PORT` (default `127.0.0.1:8000`). For access from another machine, use `HOST=0.0.0.0` and set a long random `OMNIVOICE_API_KEY`; requests then need `Authorization: Bearer <key>`.
 
