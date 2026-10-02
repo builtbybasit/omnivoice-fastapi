@@ -7,7 +7,7 @@ set REPO_URL=https://github.com/builtbybasit/omnivoice-fastapi.git
 title OmniVoice server
 
 echo ==^> Starting WSL (can take a few seconds)
-wsl.exe --cd ~ bash -lc "echo ==\> Checking uv; command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh"
-wsl.exe --cd ~ bash -lc "echo ==\> Checking the project in %REPO%; [ -d %REPO% ] || git clone %REPO_URL% %REPO%"
-wsl.exe --cd ~ bash -lc "export PATH=$HOME/.local/bin:$PATH; cd %REPO% && bash scripts/run-wsl.sh"
+wsl.exe --cd ~ -e bash -lc "echo ==\> Checking uv; command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh"
+wsl.exe --cd ~ -e bash -lc "echo ==\> Checking the project in %REPO%; [ -d %REPO% ] || git clone %REPO_URL% %REPO%"
+wsl.exe --cd ~ -e bash -lc "export PATH=$HOME/.local/bin:$PATH; cd %REPO% && bash scripts/run-wsl.sh"
 pause
