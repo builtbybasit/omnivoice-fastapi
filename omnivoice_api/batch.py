@@ -6,11 +6,13 @@ import asyncio
 import base64
 import json
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+from rich.markup import escape
 from starlette.concurrency import run_in_threadpool
 
 from . import audio, vocab
@@ -21,6 +23,7 @@ from .voices import VoiceStore
 
 LOG = logging.getLogger("omnivoice_api")
 PING = {"type": "ping"}
+RICH = {"markup": True, "highlighter": None}  # log lines that colour themselves
 
 
 @dataclass
@@ -105,6 +108,32 @@ class Renderer:
         )
         return line, options
 
+    def generate(self, lines: Sequence[Line], options: dict[str, Any]) -> list[np.ndarray]:
+        """Model thread: one engine call, logged with its size, time and speed."""
+        started = time.perf_counter()
+        audios = self.engine.generate(lines, options)
+        wall = time.perf_counter() - started
+        seconds = [len(samples) / self.engine.sample_rate for samples in audios] or [0.0]
+        chars = [len(line.text) for line in lines]
+        # Every line in a call is padded to the longest, so this share of the work is thrown away.
+        padding = 1 - sum(seconds) / (len(seconds) * max(seconds)) if max(seconds) else 0.0
+        kind = "clone" if lines[0].prompt is not None else "designed"
+        LOG.info(
+            f"[bold]{len(lines)} line{'s' * (len(lines) > 1)}[/] [dim]{kind} · "
+            f"{options.get('num_step')} steps[/] │ {sum(chars)} chars → "
+            f"[bold]{sum(seconds):.1f} s[/] audio in {wall:.2f} s │ "
+            f"{_speed(sum(seconds), wall)} │ {sum(chars) / wall:.0f} chars/s │ {_padding(padding)}",
+            extra=RICH,
+        )
+        if LOG.isEnabledFor(logging.DEBUG):
+            for number, (line, length) in enumerate(zip(lines, seconds), 1):
+                LOG.debug(
+                    f"  [cyan]#{number:<2}[/] {len(line.text):>4} chars → {length:5.1f} s  "
+                    f"[dim]{escape(line.text[:80])}[/]",
+                    extra=RICH,
+                )
+        return audios
+
     async def _pinging(self, work: Awaitable[Any], result: list[Any]) -> AsyncIterator[dict]:
         """Await ``work``, yielding a ping every ``ping_seconds``; its result goes in ``result``."""
         task = asyncio.ensure_future(work)
@@ -124,7 +153,7 @@ class Renderer:
         outcome: list[Any] = []
         try:
             async for ping in self._pinging(
-                self.model.run(self.engine.generate, [job.line for job in jobs], jobs[0].options),
+                self.model.run(self.generate, [job.line for job in jobs], jobs[0].options),
                 outcome,
             ):
                 yield ping
@@ -173,6 +202,7 @@ class Renderer:
         self, items: Sequence[SpeechItem], extra: dict[str, Any] | None, audio_format: str
     ) -> AsyncIterator[bytes]:
         answered: dict[int, dict] = {}
+        started, first = time.perf_counter(), None
         try:
             prepared: list[list[Job]] = []
             async for ping in self._pinging(self.model.run(self.prepare, items, extra), prepared):
@@ -191,6 +221,7 @@ class Renderer:
             for chunk in chunks:
                 async for line in self.render(chunk, audio_format):
                     if line["type"] == "item":  # what the summary needs, not the audio
+                        first = first or time.perf_counter() - started
                         answered[line["index"]] = {k: line.get(k) for k in ("status", "duration")}
                     yield encode_line(line)
         except Exception as exc:
@@ -202,6 +233,16 @@ class Renderer:
                     answered[index] = failed(Job(index, item), error)
                     yield encode_line(answered[index])
         done = [line for line in answered.values() if line["status"] == "done"]
+        wall, audio_seconds = time.perf_counter() - started, sum(line["duration"] for line in done)
+        failures = len(answered) - len(done)
+        LOG.info(
+            f"[bold magenta]batch[/] [bold]{len(items)} items[/] │ [green]{len(done)} done[/]"
+            + (f" [bold red]{failures} failed[/]" if failures else "")
+            + f" │ {sum(len(item.input) for item in items)} chars → [bold]{audio_seconds:.1f} s"
+            f"[/] audio in {wall:.2f} s │ {_speed(audio_seconds, wall)} │ "
+            f"first item after {first or 0.0:.2f} s",
+            extra=RICH,
+        )
         yield encode_line(
             {
                 "type": "done",
@@ -212,6 +253,16 @@ class Renderer:
                 },
             }
         )
+
+
+def _speed(audio_seconds: float, wall: float) -> str:
+    speed = audio_seconds / wall if wall else 0.0
+    return f"[bold {'green' if speed >= 1 else 'red'}]{speed:.2f}x[/] real time"
+
+
+def _padding(share: float) -> str:
+    colour = "green" if share < 0.25 else "yellow" if share < 0.5 else "bold red"
+    return f"[{colour}]padding {share:.0%}[/]"
 
 
 def failed(job: Job, error: ItemFailure) -> dict[str, Any]:

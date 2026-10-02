@@ -313,7 +313,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
             raise _speech_error(job.failure)
         engine = renderer.engine
         try:
-            [samples] = await server.model.run(engine.generate, [job.line], job.options)
+            [samples] = await server.model.run(renderer.generate, [job.line], job.options)
             data = await run_in_threadpool(
                 audio.encode, samples, body.response_format, engine.sample_rate
             )
