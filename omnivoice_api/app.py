@@ -7,16 +7,18 @@ from __future__ import annotations
 
 import logging
 import secrets
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from rich.markup import escape
 from starlette.concurrency import run_in_threadpool
 
 from . import audio, vocab
-from .batch import Renderer
+from .batch import RICH, Renderer, new_tag
 from .config import Settings
 from .engines import Engine, ModelThread, load_engine, resolve_options
 from .errors import ItemFailure, api_error, error_body, is_out_of_memory
@@ -58,6 +60,38 @@ class Server:
             self.settings.ping_seconds,
             self.settings.engine_batch_size or self.settings.max_batch_items,
         )
+        await self.log_ready()
+
+    async def log_ready(self) -> None:
+        """What the server will do, so a wrong setting shows before the first request does."""
+        settings = self.settings
+        voices = await run_in_threadpool(self.voices.all)
+        steps = self.engine.options["num_step"].default if self.engine else None
+        size = settings.engine_batch_size
+        LOG.info(
+            f"[bold green]Ready[/] · {settings.resolved_backend} · "
+            f"{len(voices)} voice{'s' * (len(voices) != 1)}: "
+            f"{escape(', '.join(voice.id for voice in voices)) or 'none'} · "
+            f"formats {', '.join(self.formats)}",
+            extra=RICH,
+        )
+        LOG.info(
+            f"[dim]lines per model call[/] {size or 'whole request'} · [dim]steps[/] {steps} · "
+            f"[dim]limits[/] {settings.max_batch_items} items, {settings.max_batch_chars} chars "
+            f"a request, {settings.max_item_chars} an item",
+            extra=RICH,
+        )
+        if not size:
+            LOG.warning(
+                "OMNIVOICE_ENGINE_BATCH_SIZE=0: a request renders in one model call, so nothing "
+                "streams until every item is done. 1 streams each item as it finishes."
+            )
+        if not voices:
+            LOG.warning(
+                "No voices yet: add some to %s or POST /v1/audio/voices", settings.voices_dir
+            )
+        if not settings.api_key:
+            LOG.warning("No OMNIVOICE_API_KEY: anyone who can reach this port can use the API")
 
     def ready(self) -> Renderer:
         if self.renderer is None:
@@ -110,25 +144,21 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
     app.state.server = server
 
     @app.exception_handler(HTTPException)
-    async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
+    async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
         detail = exc.detail
         body = detail if isinstance(detail, dict) and "error" in detail else {"detail": detail}
+        rejected(request, exc.status_code, body.get("error", {}).get("message") or str(detail))
         return JSONResponse(body, status_code=exc.status_code, headers=exc.headers)
 
     @app.exception_handler(RequestValidationError)
-    async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+    async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
         first = exc.errors()[0]
         location = [part for part in first.get("loc", ()) if part != "body"]
         path = "".join(f"[{part}]" if isinstance(part, int) else f".{part}" for part in location)
         param = str(location[0]) if location else None
-        return JSONResponse(
-            error_body(
-                f"{path.lstrip('.') or 'body'}: {first.get('msg', 'invalid')}",
-                "invalid_request",
-                param,
-            ),
-            status_code=400,
-        )
+        message = f"{path.lstrip('.') or 'body'}: {first.get('msg', 'invalid')}"
+        rejected(request, 400, message)
+        return JSONResponse(error_body(message, "invalid_request", param), status_code=400)
 
     async def require_api_key(authorization: str | None = Header(default=None)) -> None:
         if settings.api_key and not secrets.compare_digest(
@@ -308,12 +338,18 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
             instructions=body.instructions,
             language=body.language,
         )
+        tag, started = new_tag(), time.perf_counter()
+        LOG.info(
+            f"[dim cyan]{tag}[/] [bold magenta]speech[/] ← {len(body.input)} chars · "
+            f"voice {escape(voice)} · {body.response_format}",
+            extra=RICH,
+        )
         [job] = await server.model.run(renderer.prepare, [item], body.extra)
         if job.failure is not None:
             raise _speech_error(job.failure)
         engine = renderer.engine
         try:
-            [samples] = await server.model.run(renderer.generate, [job.line], job.options)
+            [samples] = await server.model.run(renderer.generate, [job.line], job.options, tag)
             data = await run_in_threadpool(
                 audio.encode, samples, body.response_format, engine.sample_rate
             )
@@ -321,6 +357,12 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
             LOG.exception("Speech generation failed")
             code = "out_of_memory" if is_out_of_memory(exc) else "render_failed"
             raise _speech_error(ItemFailure(code, str(exc)[:500], True)) from exc
+        LOG.info(
+            f"[dim cyan]{tag}[/] [bold magenta]speech[/] [green]done[/] in "
+            f"{time.perf_counter() - started:.2f} s · {len(data) / 1024:,.0f} KB "
+            f"{body.response_format}",
+            extra=RICH,
+        )
         return Response(
             content=data,
             media_type=audio.CONTENT_TYPES[body.response_format],
@@ -328,6 +370,14 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
         )
 
     return app
+
+
+def rejected(request: Request, status: int, message: str) -> None:
+    """A request answered with an error: the client sees it, and now so does the server log."""
+    LOG.warning(
+        f"[yellow]✗ {request.method} {request.url.path} → {status}[/] {escape(message)}",
+        extra=RICH,
+    )
 
 
 def _speech_error(failure: ItemFailure) -> HTTPException:

@@ -72,6 +72,8 @@ class TorchEngine:
             model = apply_flashinfer(model)
             LOG.info("FlashInfer acceleration enabled")
         self.model = model
+        # FlashInfer packs a batch's lines end to end; without it, each is padded to the longest.
+        self.pads_batches = not flashinfer
         self.sample_rate = int(model.sampling_rate)
         self.options: dict[str, Option] = {
             **sampling_options(settings.default_num_steps),
