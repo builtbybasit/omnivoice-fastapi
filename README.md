@@ -154,5 +154,6 @@ Settings come from `OMNIVOICE_*` environment variables, then `.env` (copy `.env.
 | `OMNIVOICE_DEVICE` | `auto` | torch: inference device |
 | `OMNIVOICE_ENABLE_FLASHINFER` | `auto` | torch: `true`, `false`, or `auto` (on in WSL with CUDA) |
 | `OMNIVOICE_TRANSCRIBE_MODEL` | `mlx-community/Qwen3-ASR-0.6B-8bit` | mlx: speech-to-text model for transcript-less samples |
+| `OMNIVOICE_MLX_CACHE_GB` | `1` | mlx: freed memory kept for reuse after a batch, in GB. Unlimited, it held 11 GB of a 16 GB M1 at no speed gain |
 
 `omnivoice_api/vendor/` holds OmniVoice's language map and voice-design tables, copied unchanged (Apache-2.0).

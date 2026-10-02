@@ -63,7 +63,9 @@ class Renderer:
             try:
                 job.line, job.options = self._line(item, extra)
             except ItemFailure as failure:
-                job.failure = failure
+                # A copy that was never raised: the original's traceback holds this frame, whose
+                # jobs hold it, a cycle that keeps a failed voice load's audio until the gc runs.
+                job.failure = ItemFailure(failure.code, failure.message, failure.retryable)
             jobs.append(job)
         return jobs
 
@@ -188,8 +190,8 @@ class Renderer:
             ]
             for chunk in chunks:
                 async for line in self.render(chunk, audio_format):
-                    if line["type"] == "item":
-                        answered[line["index"]] = line
+                    if line["type"] == "item":  # what the summary needs, not the audio
+                        answered[line["index"]] = {k: line.get(k) for k in ("status", "duration")}
                     yield encode_line(line)
         except Exception as exc:
             # The 200 is already sent: fail what is left rather than the request.

@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     device: str = "auto"
     enable_flashinfer: Literal["auto", "true", "false"] = "auto"
     transcribe_model: str = "mlx-community/Qwen3-ASR-0.6B-8bit"
+    mlx_cache_gb: float = Field(1, ge=0)  # freed MLX memory kept for reuse
     api_key: str = ""
     voices_dir: Path = Path("voices")
     prompts_dir: Path = Path("prompts")

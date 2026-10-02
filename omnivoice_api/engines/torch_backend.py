@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import logging
 import os
 import sys
@@ -56,7 +57,11 @@ class TorchEngine:
             )
         dtype = torch.float32 if device == "cpu" else torch.float16
         LOG.info("Loading %s on %s (%s)", settings.resolved_model, device, dtype)
-        model = OmniVoice.from_pretrained(settings.resolved_model, device_map=device, dtype=dtype)
+        # Whisper, loaded to transcribe a clone recording that has no transcript, stays loaded:
+        # on the CPU it costs RAM instead of 1.6 GB of the GPU memory batches need.
+        model = OmniVoice.from_pretrained(
+            settings.resolved_model, device_map=device, dtype=dtype, asr_device="cpu"
+        )
         if flashinfer:
             try:
                 from omnivoice.models.omnivoice_flashinfer import apply_flashinfer
@@ -87,10 +92,15 @@ class TorchEngine:
         try:
             with torch.inference_mode():
                 audios = self.model.generate(**kwargs)
-        except torch.OutOfMemoryError:
-            torch.cuda.empty_cache()
-            raise
-        return [np.asarray(audio, dtype=np.float32).reshape(-1) for audio in audios]
+        except Exception as exc:
+            # The traceback holds the failed call's frames and their GPU tensors. Keep only the
+            # message, so they are freed before the cache is emptied and the caller retries.
+            error = f"{type(exc).__name__}: {exc}"
+        else:
+            return [np.asarray(audio, dtype=np.float32).reshape(-1) for audio in audios]
+        gc.collect()
+        torch.cuda.empty_cache()
+        raise RuntimeError(error)
 
     def encode_prompt(self, recording: Path, transcript: str | None) -> tuple[Any, str]:
         # With no transcript, upstream loads Whisper and transcribes the trimmed recording.

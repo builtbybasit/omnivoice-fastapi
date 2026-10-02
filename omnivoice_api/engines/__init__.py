@@ -8,6 +8,7 @@ mlx-audio port on Apple Silicon, and ``fake`` renders tones so the API can be te
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -116,6 +117,9 @@ def load_engine(settings: Settings) -> Engine:
 
         return MlxEngine(settings)
     if backend == "torch":
+        # Read when torch starts. Batch shapes vary, and without this the reserved GPU memory
+        # fragments until a batch fails for want of a contiguous block while plenty is free.
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
         from .torch_backend import TorchEngine
 
         return TorchEngine(settings)

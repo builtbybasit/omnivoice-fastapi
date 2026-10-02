@@ -13,6 +13,7 @@ The port's ``generate_batch()`` renders the model faithfully but leaves out part
 
 from __future__ import annotations
 
+import gc
 import logging
 import tempfile
 from collections.abc import Mapping, Sequence
@@ -42,10 +43,14 @@ class MlxEngine:
     prompt_suffix = ".safetensors"
 
     def __init__(self, settings: Settings):
+        import mlx.core as mx
         from mlx_audio.tts.models.omnivoice.duration import RuleDurationEstimator
         from mlx_audio.tts.utils import load_model
 
         LOG.info("Loading %s with MLX", settings.resolved_model)
+        # MLX keeps freed buffers for reuse, by default up to about the whole memory limit; batches
+        # of varying shape fill it with buffers of many sizes, held long after the work is done.
+        mx.set_cache_limit(int(settings.mlx_cache_gb * 2**30))
         self.model = load_model(settings.resolved_model)
         self.sample_rate = int(self.model.sample_rate)
         self.transcribe_model = settings.transcribe_model
@@ -68,29 +73,39 @@ class MlxEngine:
     def generate(self, lines: Sequence[Line], options: Mapping[str, Any]) -> list[np.ndarray]:
         clone = lines[0].prompt is not None
         frame_rate = self.sample_rate / FRAME_SAMPLES
-        results = self.model.generate_batch(
-            text=[line.text for line in lines],
-            language=[line.language or "None" for line in lines],
-            instruct=[line.instruct or "None" for line in lines],
-            ref_tokens=[line.prompt.tokens for line in lines] if clone else None,
-            ref_text=[line.prompt.transcript for line in lines] if clone else None,
-            duration_s=[self._frames(line) / frame_rate for line in lines],
-            num_steps=options["num_step"],
-            guidance_scale=options["guidance_scale"],
-            t_shift=options["t_shift"],
-            layer_penalty_factor=options["layer_penalty_factor"],
-            position_temperature=options["position_temperature"],
-            class_temperature=options["class_temperature"],
-            max_batch_size=len(lines),
-        )
-        return [
-            self._postprocess(
-                np.array(result.audio, dtype=np.float32).reshape(-1),
-                line.prompt.rms if clone else None,
-                options["postprocess_output"],
+        try:
+            results = self.model.generate_batch(
+                text=[line.text for line in lines],
+                language=[line.language or "None" for line in lines],
+                instruct=[line.instruct or "None" for line in lines],
+                ref_tokens=[line.prompt.tokens for line in lines] if clone else None,
+                ref_text=[line.prompt.transcript for line in lines] if clone else None,
+                duration_s=[self._frames(line) / frame_rate for line in lines],
+                num_steps=options["num_step"],
+                guidance_scale=options["guidance_scale"],
+                t_shift=options["t_shift"],
+                layer_penalty_factor=options["layer_penalty_factor"],
+                position_temperature=options["position_temperature"],
+                class_temperature=options["class_temperature"],
+                max_batch_size=len(lines),
             )
-            for line, result in zip(lines, results)
-        ]
+            # Inside the try: MLX is lazy, so running out of memory can surface here.
+            audios = [np.array(result.audio, dtype=np.float32).reshape(-1) for result in results]
+        except Exception as exc:
+            # As in the torch engine: keep only the message, so the traceback's frames and the
+            # arrays they hold are freed before the cache is cleared and the caller retries.
+            error = f"{type(exc).__name__}: {exc}"
+        else:
+            return [
+                self._postprocess(audio, line.prompt.rms if clone else None,
+                                  options["postprocess_output"])
+                for line, audio in zip(lines, audios)
+            ]
+        import mlx.core as mx
+
+        gc.collect()
+        mx.clear_cache()
+        raise RuntimeError(error)
 
     def _postprocess(self, audio: np.ndarray, ref_rms: float | None, trim: bool) -> np.ndarray:
         """Upstream's ``_post_process_audio`` with its default pad and fade of 0.1 s."""
