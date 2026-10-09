@@ -52,6 +52,8 @@ On each run it:
 5. Downloads the model (3.3 GB) the first time, so a slow download shows up in the terminal and resumes on the next run.
 6. Starts the API with FlashInfer required. Set `OMNIVOICE_ENABLE_FLASHINFER=false` to run the slower baseline path on purpose.
 
+To change settings from Windows, put a `.env` next to `start.bat`. It replaces the one in WSL each time the server starts.
+
 Windows apps can call the WSL server at `http://localhost:8000/v1`. Interactive API docs are at `/docs`. Both run scripts take `HOST` and `PORT` (default `127.0.0.1:8000`). For access from another machine, use `HOST=0.0.0.0` and set a long random `OMNIVOICE_API_KEY`; requests then need `Authorization: Bearer <key>`.
 
 ## Development
