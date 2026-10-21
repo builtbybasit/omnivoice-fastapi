@@ -341,7 +341,8 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
         tag, started = new_tag(), time.perf_counter()
         LOG.info(
             f"[dim cyan]{tag}[/] [bold magenta]speech[/] ← {len(body.input)} chars · "
-            f"voice {escape(voice)} · {body.response_format}",
+            f"voice {escape(voice)} · {body.response_format}"
+            + (f" · speed {body.speed:g}x" if body.speed not in (None, 1.0) else ""),
             extra=RICH,
         )
         [job] = await server.model.run(renderer.prepare, [item], body.extra)

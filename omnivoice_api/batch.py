@@ -224,10 +224,12 @@ class Renderer:
         steps = (extra or {}).get("num_step", self.engine.options["num_step"].default)
         # ponytail: ~16 chars a second of speech; upstream renders lines past ~30 s in pieces
         long = sum(count > 450 for count in chars)
+        speeds = sorted({i.speed for i in items if i.speed not in (None, 1.0)})
         LOG.info(
             f"{mark} [bold magenta]batch[/] ← [bold]{len(items)} items[/] · {sum(chars)} chars "
             f"(longest {max(chars)}) · voice {', '.join(sorted({i.voice for i in items}))} · "
             f"{audio_format} · {steps} steps"
+            + (f" · speed {', '.join(f'{v:g}x' for v in speeds)}" if speeds else "")
             + (f" · [yellow]{long} over 450 chars, rendered in pieces[/]" if long else ""),
             extra=RICH,
         )
