@@ -6,6 +6,7 @@ import gc
 import logging
 import os
 import sys
+import traceback
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -106,8 +107,28 @@ class TorchEngine:
 
     def encode_prompt(self, recording: Path, transcript: str | None) -> tuple[Any, str]:
         # With no transcript, upstream loads Whisper and transcribes the trimmed recording.
-        prompt = self.model.create_voice_clone_prompt(ref_audio=str(recording), ref_text=transcript)
-        return prompt, prompt.ref_text
+        try:
+            # Upstream's prompt encoder does not disable autograd. Its audio tokenizer can
+            # otherwise retain gigabytes of intermediate activations for a short recording.
+            with torch.inference_mode():
+                prompt = self.model.create_voice_clone_prompt(
+                    ref_audio=str(recording), ref_text=transcript
+                )
+                # Match prompts loaded from disk: cached voices should not occupy VRAM.
+                prompt.ref_audio_tokens = prompt.ref_audio_tokens.detach().cpu()
+        except Exception as exc:
+            # Format now: log handlers can retain exc_info and its GPU tensors indefinitely.
+            LOG.error(
+                "Voice prompt encoding failed for %s:\n%s", recording.name, traceback.format_exc()
+            )
+            error = f"{type(exc).__name__}: {exc}"
+        else:
+            torch.cuda.empty_cache()
+            return prompt, prompt.ref_text
+        # Leave the except block before collecting: its traceback holds tokenizer tensors.
+        gc.collect()
+        torch.cuda.empty_cache()
+        raise RuntimeError(error) from None
 
     def save_prompt(self, prompt: Any, path: Path, source: str) -> None:
         """Upstream's ``VoiceClonePrompt.save()`` dict plus ``source``, which upstream's
